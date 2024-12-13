@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>D3画线并编辑</title>
+    <script src="./d3.js"></script>
+    <style>
+        svg {
+            outline: 1px #000 dashed;
+        }
+    </style>
+</head>
+
+<body>
+    <svg width="600" height="700"></svg>
+    <script>
+        const TEMP_LINE_STROKE_COLOR = 'blue'
+        const svg = d3.select('svg')
+        let isDrawing = false
+        const tempLinePoints = {}
+        let linePoints = []
+        const STROKE = 'black'
+        const STROKE_WIDTH = 3
+        const STROKE_LINE_STYLE = 'solid'
+
+        svg.on("mousedown", function (event) {
+            if (d3.select(event.target).classed('line')) return;
+            const [x, y] = d3.pointer(event);
+            isDrawing = true;
+            tempLinePoints.start = { x, y };
+
+        })
+        svg.on("mousemove", function (event) {
+            if (!isDrawing) return;
+            const [x, y] = d3.pointer(event);
+            tempLinePoints.end = { x, y }
+            // 绘制临时线
+            svg.selectAll('.temp-drawing-line')
+                .data([tempLinePoints])
+                .join('line')
+                .attr('class', 'temp-drawing-line')
+                .attr("x1", d => {
+                    return d.start.x
+                })
+                .attr("y1", d => d.start.y)
+                .attr("x2", d => d.end.x)
+                .attr("y2", d => d.end.y)
+                .attr("stroke", "red")
+                .attr("stroke-width", 2)
+                .attr("stroke-dasharray", "5,5");
+
+        });
+        svg.on('mouseup', function (event) {
+            if (!isDrawing || !Object.keys(tempLinePoints).length) return;
+            if (d3.select(event.target).classed('line')) return;
+            const [x, y] = d3.pointer(event);
+            isDrawing = false;
+            if (!svg.selectAll('.temp-drawing-line').size()) return;
+            const lineData = svg.selectAll('.temp-drawing-line').data()[0]
+            // 移除临时虚线
+            svg.selectAll('.temp-drawing-line').remove()
+
+            linePoints = [...linePoints, { ...lineData, groupId }].filter(item => !(item.start && item.end && item.start.x === item.end.x && item.start.y === item.end.y))
+            const group = svg.selectAll('.line-g').data(linePoints).join('g').attr('class', 'line-g')
+            group.each((d, i, n) => {
+                const g = d3.select(n[i])
+                g.selectAll(".line").data([{ line: d }]).join('line')
+                    .attr('class', 'line')
+                    .attr("x1", d => d.line.start.x)
+                    .attr("y1", d => d.line.start.y)
+                    .attr("x2", d => d.line.end.x)
+                    .attr("y2", d => d.line.end.y)
+                    .attr("stroke", STROKE)
+                    .attr("stroke-width", STROKE_WIDTH)
+                    .attr("stroke-dasharray", STROKE_LINE_STYLE)
+                    .attr('line-cap', 'round')
+                    .style("cursor", "pointer") // 设置鼠标悬停效果
+                    .attr('pointer-events', 'all')
+                    .on("click", function (event) {
+                        event.stopPropagation();
+                        onLineClick(d3.select(this), g)
+                    }).raise();
+            })
+
+        })
+
+        function onLineClick (lineNode, g) {
+            const lineData = lineNode.data()[0].line
+            const anchors = getAnchorPos(lineData.start, lineData.end)
+            drawAnchor(g, anchors)
+        }
+
+        function getAnchorPos (startPoint, endPoint) {
+            // P = (1 - t) × P0 + t × P1
+            const lineFun = (t, p0, p1) => (1 - t) * p0 + t * p1
+            const control1 = {}
+            const control2 = {}
+
+            control1.x = lineFun(1 / 3, startPoint.x, endPoint.x)
+            control2.x = lineFun(2 / 3, startPoint.x, endPoint.x)
+
+            control1.y = lineFun(1 / 3, startPoint.y, endPoint.y)
+            control2.y = lineFun(2 / 3, startPoint.y, endPoint.y)
+
+            return [startPoint, control1, control2, endPoint]
+        }
+
+        function drawAnchor (g, anchors) {
+            g.selectAll('.anchor').data(anchors)
+                .join('circle')
+                .attr('class', 'anchor')
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y)
+                .attr("r", 5)
+                .attr('stroke', 'black')
+                .attr('stroke-width', 1)
+                .attr("fill", "red")
+                .attr("cursor", "pointer")
+                .attr('pointer-events', 'all')
+                .raise()
+                .call(d3.drag().on("drag", function (event) {
+                    d3.select(this)
+                        .attr("cx", event.x)
+                        .attr("cy", event.y);
+                    const anchors = []
+                    g.selectAll('.anchor').each((d, i, n) => {
+                        const node = d3.select(n[i])
+                        anchors.push({ x: node.attr('cx'), y: node.attr('cy') })
+                    })
+                    g.selectAll('.anchor').data(anchors)
+                    updateAnchor(g)
+                    drawTempBezierCurve(g);
+                }));
+        }
+        function updateAnchor (group) {
+            const anchors = group.selectAll('.anchor').data()
+            drawAnchor(group, anchors)
+        }
+        function drawTempBezierCurve (group) {
+            const anchors = group.selectAll('.anchor').data()
+            group.selectAll(`.bazier-temp`).data([anchors])
+                .join('path')
+                .attr('d', d => {
+                    return `M${d[0].x}, ${d[0].y}
+                  C${d[1].x},${d[1].y} 
+                  ${d[2].x},${d[2].y} 
+                  ${d[3].x},${d[3].y}`
+                })
+                .attr("stroke", TEMP_LINE_STROKE_COLOR)
+                .attr("stroke-width", 2)
+                .attr("stroke-dasharray", "5,5") // 虚线样式
+                .attr("fill", "none")
+                .attr('class', `bazier-temp`)
+                .attr('pointer-events', 'none')
+        }
+
+        svg.on('contextmenu', (e) => {
+            e.preventDefault()
+            svg.selectAll('g').each((d, i, n) => {
+                const group = d3.select(n[i])
+                const activeLineNodes = group.selectAll('.bazier-temp')
+                if (activeLineNodes.size()) {
+                    group.selectAll('.line').remove()
+                    group.selectAll('.bazier-temp').remove()
+                    group.selectAll('.anchor').style('visibility', 'hidden')
+                    drawBezierCurve(group)
+                }
+            })
+        })
+        function drawBezierCurve (group) {
+            const anchors = group.selectAll('.anchor').data()
+            group.selectAll(`.line`).data([anchors])
+                .join('path')
+                .attr('d', d => {
+                    return `M${d[0].x}, ${d[0].y}
+                  C${d[1].x},${d[1].y} 
+                  ${d[2].x},${d[2].y} 
+                  ${d[3].x},${d[3].y}`
+                })
+                .attr("stroke", STROKE)
+                .attr("stroke-width", STROKE_WIDTH)
+                .attr("stroke-dasharray", STROKE_LINE_STYLE)
+                .attr("fill", "none")
+                .attr('class', `line`)
+                .attr('pointer-events', 'none')
+                .attr('line-cap', 'round')
+                .style("cursor", "pointer") // 设置鼠标悬停效果
+                .attr('pointer-events', 'all')
+                .on("click", function (event) {
+                    event.stopPropagation();
+                    onBezierClick(group)
+                }).raise();
+        }
+
+        function onBezierClick(group) {
+            group.selectAll('.anchor').style('visibility', 'visible')
+        }
+    </script>
+</body>
+
+</html>
